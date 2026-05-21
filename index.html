@@ -259,6 +259,15 @@ details .body li{margin-bottom:3px}
 #check-top-tabs button:last-child{border-right:none}
 #check-top-tabs button:hover{opacity:.88}
 .footer-info{margin-top:32px;padding:14px;text-align:center;font-size:11.5px;color:var(--muted);border-top:1px solid var(--line)}
+
+/* 채널 임계값 설정 패널 */
+.thresh-panel{display:flex;flex-wrap:wrap;gap:8px;padding:14px 16px;background:var(--soft);border:1px solid var(--line);border-radius:8px;border-left:4px solid var(--gold2);margin-bottom:16px;}
+.thresh-item{display:flex;align-items:center;gap:6px;padding:5px 10px;background:#fff;border:1px solid var(--line);border-radius:6px;}
+.thresh-item label{font-size:11px;font-weight:700;color:var(--ink2);white-space:nowrap;}
+.thresh-item .ch-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.thresh-input{width:46px;padding:3px 6px;border:1px solid var(--line);border-radius:3px;font-family:var(--m);font-size:12px;font-weight:700;text-align:center;}
+.thresh-new-badge{font-size:9px;padding:1px 5px;border-radius:2px;background:rgba(184,147,58,.15);color:var(--gold);font-family:var(--m);font-weight:700;}
+
 </style>
 </head>
 <body>
@@ -487,7 +496,15 @@ details .body li{margin-bottom:3px}
 </section>
 
 <!-- ══ CHECK ══ -->
-<section id="view-check" class="view">
+<section id="view-check"
+<!-- 채널별 성과 기준 설정 -->
+  <div style="margin-bottom:14px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <strong style="font-size:13px;color:var(--navy);">⚙️ 채널별 성과 미달 기준 (%)</strong>
+      <span style="font-size:11px;color:var(--muted);">신생 채널은 낮게 설정 · 숫자를 직접 수정 가능</span>
+    </div>
+    <div class="thresh-panel" id="threshold-panel"><!-- JS로 렌더 --></div>
+  </div> class="view">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding:10px 16px;background:linear-gradient(90deg,rgba(26,90,150,.06),rgba(192,57,43,.04));border:1px solid rgba(192,57,43,.18);border-radius:8px">
     <div style="font-size:13px;color:var(--ink2)"><strong>📊 CHECK → 🔧 ACT:</strong> 성과 미달 콘텐츠를 ACT 개선으로 전환합니다</div>
     <button class="btn btn-act btn-sm" onclick="nav('act')">🔧 ACT 개선 →</button>
@@ -711,15 +728,20 @@ details .body li{margin-bottom:3px}
 const LS = 'acorn_pdca_v3';
 
 const CH = {
-  youtube:    {label:'YouTube',      color:'#FF0000', short:'YT',  emoji:'▶'},
-  instagram:  {label:'Instagram',    color:'#E4405F', short:'IG',  emoji:'📸'},
-  facebook:   {label:'Facebook',     color:'#1877F2', short:'FB',  emoji:'👍'},
-  newsletter: {label:'뉴스레터',      color:'#F97316', short:'NL',  emoji:'📧'},
-  kakao:      {label:'카카오채널',    color:'#CA8A04', short:'KK',  emoji:'💬'},
-  blog:       {label:'블로그',        color:'#0EA5E9', short:'BG',  emoji:'📝'},
-  linkedin:   {label:'LinkedIn',     color:'#0A66C2', short:'LI',  emoji:'💼'},
-  twitter:    {label:'X(트위터)',     color:'#111111', short:'X',   emoji:'🐦'}
+  youtube:    {label:'YouTube',      color:'#FF0000', short:'YT',  emoji:'▶',  threshold:60, isNew:false},
+  instagram:  {label:'Instagram',    color:'#E4405F', short:'IG',  emoji:'📸', threshold:50, isNew:false},
+  facebook:   {label:'Facebook',     color:'#1877F2', short:'FB',  emoji:'👍', threshold:60, isNew:false},
+  newsletter: {label:'뉴스레터',      color:'#F97316', short:'NL',  emoji:'📧', threshold:60, isNew:false},
+  kakao:      {label:'카카오채널',    color:'#CA8A04', short:'KK',  emoji:'💬', threshold:40, isNew:true},
+  blog:       {label:'블로그',        color:'#0EA5E9', short:'BG',  emoji:'📝', threshold:40, isNew:true},
+  linkedin:   {label:'LinkedIn',     color:'#0A66C2', short:'LI',  emoji:'💼', threshold:40, isNew:true},
+  twitter:    {label:'X(트위터)',     color:'#111111', short:'X',   emoji:'🐦', threshold:40, isNew:true}
 };
+
+/* 채널별 성과 미달 임계값 — 신생 채널은 낮게 설정 (채널 설정에서 조정 가능) */
+function getThreshold(channel) {
+  return (CH[channel] && CH[channel].threshold != null) ? CH[channel].threshold : 60;
+}
 const CH_ORDER = ['youtube','instagram','facebook','newsletter','kakao','blog','linkedin','twitter'];
 
 const SERIES = {
@@ -759,8 +781,9 @@ const CH_GUIDE = [
   {ch:'newsletter',strat:'구독자 직접 소통 (목표 500명)', series:'책톡책(1·3주) / 북레터(2주) / 지식레터(4주) / 저자 인터뷰',                    cycle:'주 1회',            maker:'박혜경·백경화', reviewer:'황영주'},
   {ch:'kakao',     strat:'에이콘온 서비스 안내',          series:'FAQ / 출간 사례 / 저자맞춤 서비스 4종',                                        cycle:'수·금 (주 2회)',    maker:'박혜경', reviewer:'전담'},
   {ch:'blog',      strat:'SEO 콘텐츠',                   series:'도서 리뷰 / 기술 트렌드 / 저자 칼럼',                                          cycle:'주 1회',            maker:'각 편집자', reviewer:'김희지'},
-  {ch:'linkedin',  strat:'B2B·전문가 타깃 + 광고',        series:'철학형 / 허들 낮추기형 / 리스트형 / 브랜딩형',                                  cycle:'주 2회',            maker:'김희지', reviewer:'박혜경'},
-  {ch:'twitter',   strat:'빠른 소식·인용구',              series:'신간 한줄 소개 / 인용구 카드 / 이벤트',                                        cycle:'주 2~3회',          maker:'김희지', reviewer:'박혜경'}
+  /* LI 주기: 거의 매일 (김희지) */
+    {ch:'linkedin',  strat:'B2B·전문가 타깃 + 광고',        series:'철학형 / 허들 낮추기형 / 리스트형 / 브랜딩형',                                  cycle:'거의 매일',            maker:'김희지', reviewer:'박혜경'},
+  {ch:'twitter',   strat:'빠른 소식·인용구',              series:'신간 한줄 소개 / 인용구 카드 / 이벤트',                                        cycle:'거의 매일',          maker:'김희지', reviewer:'박혜경'}
 ];
 
 const TEAM = [
@@ -852,7 +875,7 @@ function makeSeed(){
     comments: [
       {id:'cmt1', section:'dashboard', author:'황영주', content:'대시보드 KPI 달성률 색상 기준을 팀 내 합의 필요 — 60% 기준이 너무 낮은 것 같습니다.', date:off(-3), status:'open', priority:'mid'},
       {id:'cmt2', section:'plan', author:'박혜경', content:'채널 탭 없애고 전체 목록으로 보여주는 방식이 훨씬 편합니다. 현재 방식 유지 요청!', date:off(-2), status:'done', priority:'low'},
-      {id:'cmt3', section:'channels', author:'김희지', content:'LinkedIn·X 주기를 "주 2회"로 표기되어 있는데 실제로는 거의 매일 업로드합니다. 수정 필요.', date:off(-1), status:'reviewing', priority:'high'},
+      {id:'cmt3', section:'channels', author:'김희지', content:'LinkedIn·X 주기 반영됨 (거의 매일)되어 있는데 실제로는 거의 매일 업로드합니다. 수정 필요.', date:off(-1), status:'reviewing', priority:'high'},
       {id:'cmt4', section:'act', author:'백경화', content:'성과 미달 기준 60%를 낮은 달성률로 판단하기엔 신생 채널은 너무 가혹합니다. 채널별로 다르게 설정할 수 있으면 좋겠어요.', date:off(0), status:'open', priority:'mid'}
     ],
     notices: [
@@ -908,9 +931,15 @@ function achieveRate(i){
   if(!i.targetViews) return null;
   return Math.round((i.actualViews||0)/i.targetViews*100);
 }
-function rateColor(r){
+function rateColor(r, channel){
   if(r===null) return 'var(--muted)';
-  return r>=90?'var(--do)':r>=60?'var(--check)':'var(--act)';
+  const thr = channel ? getThreshold(channel) : 60;
+  const hi  = thr + 30;  // 우수 기준 = 임계값+30
+  return r>=100 ? 'var(--do)'       // ✅ 목표 달성
+       : r>= hi ? '#2E7D32'         // 🟢 우수
+       : r>=thr ? 'var(--check)'    // 🟡 보통 (임계값 이상)
+       : r>=Math.floor(thr*0.5) ? 'var(--gold)' // 🟠 주의 (임계값 50~)
+       : 'var(--act)';              // 🔴 개선 필요
 }
 
 /* ═══ 내비게이션 ═══ */
@@ -1315,11 +1344,13 @@ function isLow(i){
   if(!i||i.stage==='plan') return false;
   if(!(i.actualViews>0)) return true;       // 실적 미입력
   const r=achieveRate(i);
-  return r===null||r<60;                     // 실적 있지만 60% 미달
+  const thr = getThreshold(i.channel);      // 채널별 임계값
+  return r===null||r<thr;                   // 실적 있지만 채널 기준 미달
 }
 
 function renderCheck(){
   try{
+  renderThresholdPanel();
   const sel=el('check-camp');
   if(sel){
     const cur=sel.value;
@@ -4476,6 +4507,63 @@ function importData(input){
   };
   r.readAsText(f);
 }
+
+/* ── 채널 임계값 설정 패널 렌더 ── */
+function renderThresholdPanel() {
+  var panel = document.getElementById('threshold-panel');
+  if (!panel) return;
+  panel.innerHTML = '';
+  Object.keys(CH).forEach(function(k) {
+    var v = CH[k];
+    // wrapper
+    var wrap = document.createElement('div');
+    wrap.className = 'thresh-item';
+    // dot
+    var dot = document.createElement('span');
+    dot.className = 'ch-dot';
+    dot.style.background = v.color;
+    // label
+    var lbl = document.createElement('label');
+    lbl.textContent = v.short;
+    // 신생 badge
+    var badge = document.createElement('span');
+    badge.className = 'thresh-new-badge';
+    badge.textContent = '신생';
+    badge.style.display = v.isNew ? '' : 'none';
+    // input
+    var inp = document.createElement('input');
+    inp.className = 'thresh-input';
+    inp.type = 'number';
+    inp.min = 10;
+    inp.max = 100;
+    inp.value = v.threshold != null ? v.threshold : 60;
+    inp.title = v.label + ' 성과 미달 기준 (%)';
+    inp.setAttribute('data-ch', k);
+    inp.addEventListener('change', function() {
+      updateThreshold(this.getAttribute('data-ch'), +this.value);
+    });
+    // pct
+    var pct = document.createElement('span');
+    pct.style.cssText = 'font-size:10px;color:var(--muted)';
+    pct.textContent = '%';
+    wrap.appendChild(dot);
+    wrap.appendChild(lbl);
+    if (v.isNew) wrap.appendChild(badge);
+    wrap.appendChild(inp);
+    wrap.appendChild(pct);
+    panel.appendChild(wrap);
+  });
+}
+
+
+function updateThreshold(ch, val) {
+  if (CH[ch]) {
+    CH[ch].threshold = Math.max(10, Math.min(100, val));
+    // CHECK 섹션 재렌더
+    if (typeof renderCheck === 'function') renderCheck();
+  }
+}
+
 </script>
 <!-- ═══════════════ 기획안 작성 모달 ═══════════════ -->
 <div id="brief-overlay" style="display:none;position:fixed;inset:0;background:rgba(11,29,54,.6);z-index:600;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)closeBriefModal()">
