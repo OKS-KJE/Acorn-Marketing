@@ -499,12 +499,28 @@ details .body li{margin-bottom:3px}
 <section id="view-check"
 <!-- 채널별 성과 기준 설정 -->
   <div style="margin-bottom:14px;">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;">
       <strong style="font-size:13px;color:var(--navy);">⚙️ 채널별 성과 미달 기준 (%)</strong>
-      <span style="font-size:11px;color:var(--muted);">신생 채널은 낮게 설정 · 숫자를 직접 수정 가능</span>
+      <span style="font-size:11px;color:var(--muted);">각 채널의 기준(%)을 수정 후 저장 버튼을 눌러 적용합니다</span>
+      <button id="thresh-save-btn" onclick="applyAndSaveThresholds()"
+        style="margin-left:auto;padding:6px 18px;background:var(--navy);color:#fff;border:1.5px solid var(--gold2);
+               border-radius:4px;font-family:var(--k);font-size:12px;font-weight:700;cursor:pointer;
+               transition:all .15s;white-space:nowrap;"
+        onmouseover="this.style.background='var(--gold)';this.style.color='var(--navy)'"
+        onmouseout="this.style.background='var(--navy)';this.style.color='#fff'">
+        💾 저장 &amp; 적용
+      </button>
+      <button onclick="resetThresholds()"
+        style="padding:6px 14px;background:transparent;color:var(--muted);border:1px solid var(--line);
+               border-radius:4px;font-size:12px;cursor:pointer;transition:.15s;white-space:nowrap;"
+        onmouseover="this.style.borderColor='var(--act)';this.style.color='var(--act)'"
+        onmouseout="this.style.borderColor='var(--line)';this.style.color='var(--muted)'">
+        초기화
+      </button>
+      <span id="thresh-saved-msg" style="font-size:11px;color:var(--do);font-weight:700;display:none;"></span>
     </div>
     <div class="thresh-panel" id="threshold-panel"><!-- JS로 렌더 --></div>
-  </div> class="view">
+  </div>
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding:10px 16px;background:linear-gradient(90deg,rgba(26,90,150,.06),rgba(192,57,43,.04));border:1px solid rgba(192,57,43,.18);border-radius:8px">
     <div style="font-size:13px;color:var(--ink2)"><strong>📊 CHECK → 🔧 ACT:</strong> 성과 미달 콘텐츠를 ACT 개선으로 전환합니다</div>
     <button class="btn btn-act btn-sm" onclick="nav('act')">🔧 ACT 개선 →</button>
@@ -900,7 +916,19 @@ function loadState(){
   }catch(e){}
   return makeSeed();
 }
-function saveState(){ try{ localStorage.setItem(LS, JSON.stringify(state)); }catch(e){} }
+function saveState(){
+  try{
+    // 채널별 임계값을 state에 함께 저장
+    state._thresholds = {};
+    Object.keys(CH).forEach(function(k){ state._thresholds[k] = CH[k].threshold; });
+    localStorage.setItem(LS, JSON.stringify(state));
+  }catch(e){}
+}
+
+function saveThresholds(){
+  // 임계값만 즉시 저장
+  saveState();
+}
 function confirmReset(){
   if(confirm('모든 데이터를 초기 시드로 리셋할까요?')){ state = makeSeed(); saveState(); renderAll(); }
 }
@@ -4536,7 +4564,7 @@ function renderThresholdPanel() {
     inp.type = 'number';
     inp.min = 10;
     inp.max = 100;
-    inp.value = v.threshold != null ? v.threshold : 60;
+    inp.value = v._pendingThreshold != null ? v._pendingThreshold : (v.threshold != null ? v.threshold : 60);
     inp.title = v.label + ' 성과 미달 기준 (%)';
     inp.setAttribute('data-ch', k);
     inp.addEventListener('change', function() {
@@ -4557,11 +4585,68 @@ function renderThresholdPanel() {
 
 
 function updateThreshold(ch, val) {
+  // 입력값만 임시 반영 — 저장 버튼 클릭 전까지 성과 분석에 적용 안 됨
   if (CH[ch]) {
-    CH[ch].threshold = Math.max(10, Math.min(100, val));
-    // CHECK 섹션 재렌더
-    if (typeof renderCheck === 'function') renderCheck();
+    CH[ch]._pendingThreshold = Math.max(10, Math.min(100, val));
+    // 저장 버튼 활성화 (변경 사항 있음 표시)
+    var btn = document.getElementById('thresh-save-btn');
+    if(btn) {
+      btn.style.background = 'var(--gold)';
+      btn.style.color = 'var(--navy)';
+      btn.style.borderColor = 'var(--gold)';
+      btn.textContent = '💾 저장 & 적용 *';
+    }
+    var msg = document.getElementById('thresh-saved-msg');
+    if(msg){ msg.style.display='inline'; msg.style.color='var(--check)'; msg.textContent='* 미저장 변경사항'; }
   }
+}
+
+function applyAndSaveThresholds() {
+  // _pendingThreshold를 threshold에 확정 반영
+  Object.keys(CH).forEach(function(k) {
+    if (CH[k]._pendingThreshold != null) {
+      CH[k].threshold = CH[k]._pendingThreshold;
+      delete CH[k]._pendingThreshold;
+    }
+  });
+  // localStorage 저장
+  saveThresholds();
+  // 성과 분석 전체 재렌더 (변경된 기준 적용)
+  if (typeof renderCheck === 'function') renderCheck();
+  if (typeof renderDashboard === 'function') renderDashboard();
+  // 저장 완료 피드백
+  var btn = document.getElementById('thresh-save-btn');
+  if(btn){
+    btn.style.background = 'var(--do)';
+    btn.style.color = '#fff';
+    btn.style.borderColor = 'var(--do)';
+    btn.textContent = '✓ 저장 완료';
+    setTimeout(function(){
+      btn.style.background = 'var(--navy)';
+      btn.style.color = '#fff';
+      btn.style.borderColor = 'var(--gold2)';
+      btn.textContent = '💾 저장 & 적용';
+    }, 2000);
+  }
+  var msg = document.getElementById('thresh-saved-msg');
+  if(msg){ msg.style.color='var(--do)'; msg.textContent='✓ 저장 완료 — 성과 분석에 반영됨'; msg.style.display='inline';
+    clearTimeout(msg._t); msg._t=setTimeout(function(){ msg.style.display='none'; },3000); }
+}
+
+function resetThresholds() {
+  var defaults = {youtube:60,instagram:50,facebook:60,newsletter:60,kakao:40,blog:40,linkedin:40,twitter:40};
+  if(!confirm('채널별 기준을 기본값으로 초기화할까요?')) return;
+  Object.keys(defaults).forEach(function(k){
+    if(CH[k]) { CH[k].threshold = defaults[k]; CH[k]._pendingThreshold = null; }
+  });
+  saveThresholds();
+  renderThresholdPanel();
+  if(typeof renderCheck==='function') renderCheck();
+  var msg = document.getElementById('thresh-saved-msg');
+  if(msg){ msg.style.color='var(--do)'; msg.textContent='✓ 초기화 완료'; msg.style.display='inline';
+    clearTimeout(msg._t); msg._t=setTimeout(function(){ msg.style.display='none'; },2000); }
+  var btn = document.getElementById('thresh-save-btn');
+  if(btn){ btn.style.background='var(--navy)'; btn.style.color='#fff'; btn.textContent='💾 저장 & 적용'; }
 }
 
 </script>
