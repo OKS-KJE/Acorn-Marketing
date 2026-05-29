@@ -289,7 +289,10 @@ details .body li{margin-bottom:3px}
         <span id="comment-badge" style="display:none;position:absolute;top:-5px;right:-5px;background:var(--act);color:#fff;font-size:9px;font-weight:800;border-radius:999px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 3px">0</span>
       </button>
       <span class="h-badge" id="todayBadge">—</span>
-      <span class="h-badge">담당: K.S</span>
+      <span class="h-badge" id="syncBadge" title="GitHub 동기화 상태 · 클릭으로 새로고침" onclick="ghPull()" style="cursor:pointer">⚪ 로컬</span>
+      <span class="h-badge">담당: <span id="ghUserBadge">K.S</span></span>
+      <button class="h-btn h-btn-ghost" onclick="ghPull()" title="GitHub에서 최신 데이터 가져오기">🔄 새로고침</button>
+      <button class="h-btn h-btn-gold" onclick="openGhSettings()">⚙ GitHub 공유</button>
       <button class="h-btn h-btn-ghost" onclick="openSearch()" style="gap:6px">🔍 검색 <kbd style="font-size:9px;padding:1px 5px;border:1px solid rgba(255,255,255,.2);border-radius:3px;opacity:.7">Ctrl+K</kbd></button>
       <button class="h-btn h-btn-ghost" onclick="openDataMgr()">⚙ 데이터 관리</button>
     </div>
@@ -918,10 +921,12 @@ function loadState(){
 }
 function saveState(){
   try{
-    // 채널별 임계값을 state에 함께 저장
     state._thresholds = {};
     Object.keys(CH).forEach(function(k){ state._thresholds[k] = CH[k].threshold; });
+    state.updatedAt = new Date().toISOString();
+    state.updatedBy = (ghCfg() && ghCfg().user) || 'unknown';
     localStorage.setItem(LS, JSON.stringify(state));
+    if(typeof ghPushDebounced === 'function') ghPushDebounced();
   }catch(e){}
 }
 
@@ -4648,6 +4653,222 @@ function resetThresholds() {
   var btn = document.getElementById('thresh-save-btn');
   if(btn){ btn.style.background='var(--navy)'; btn.style.color='#fff'; btn.textContent='💾 저장 & 적용'; }
 }
+
+
+/* ═══════════════════════════════════════════════
+   GitHub 데이터 공유 동기화 모듈 (v1)
+═══════════════════════════════════════════════ */
+const GH_CFG_KEY = 'acorn_gh_cfg_v1';
+let ghSha = null;
+let ghPushTimer = null;
+let ghPushing = false;
+
+function ghCfg(){
+  try{ return JSON.parse(localStorage.getItem(GH_CFG_KEY) || '{}'); }
+  catch(e){ return {}; }
+}
+function ghSetCfg(cfg){
+  localStorage.setItem(GH_CFG_KEY, JSON.stringify(cfg));
+  const $u = document.getElementById('ghUserBadge');
+  if($u && cfg.user) $u.textContent = cfg.user;
+}
+function setGhBadge(s){
+  const $b = document.getElementById('syncBadge');
+  if(!$b) return;
+  const m = {local:'⚪ 로컬',syncing:'🟡 저장 중...',synced:'🟢 동기화됨',error:'🔴 오프라인',pulling:'🔵 새로고침 중...'};
+  $b.textContent = m[s] || m.local;
+}
+async function ghPull(silent){
+  const cfg = ghCfg();
+  if(!cfg.owner || !cfg.repo){
+    if(!silent) alert('⚙ GitHub 공유 설정을 먼저 등록해주세요.');
+    return;
+  }
+  setGhBadge('pulling');
+  try{
+    const path   = cfg.path   || 'data/pdca-v3.json';
+    const branch = cfg.branch || 'main';
+    const url    = 'https://raw.githubusercontent.com/' + cfg.owner + '/' + cfg.repo + '/' + branch + '/' + path + '?t=' + Date.now();
+    const r = await fetch(url, {cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const data = await r.json();
+    if(data && Array.isArray(data.items) && Array.isArray(data.campaigns)){
+      data.version = 3;
+      if(!data.kpis)     data.kpis     = state.kpis     || [];
+      if(!data.comments) data.comments = state.comments || [];
+      if(!data.notices)  data.notices  = state.notices  || [];
+      state = data;
+      localStorage.setItem(LS, JSON.stringify(state));
+      if(typeof renderAll === 'function') renderAll();
+      if(typeof updateCounts === 'function') updateCounts();
+    }
+    if(cfg.token){
+      const shaUrl = 'https://api.github.com/repos/' + cfg.owner + '/' + cfg.repo + '/contents/' + path + '?ref=' + branch;
+      const sr = await fetch(shaUrl, {headers:{Authorization:'token '+cfg.token, Accept:'application/vnd.github+json'}});
+      if(sr.ok){ const sd = await sr.json(); ghSha = sd.sha; }
+    }
+    setGhBadge(cfg.token ? 'synced' : 'local');
+  }catch(e){
+    setGhBadge('error');
+    if(!silent){
+      console.error('GitHub pull 실패:', e);
+      alert('GitHub 데이터 로드 실패: ' + e.message + '\n저장소가 Public이고 파일 경로가 맞는지 확인해주세요.');
+    }
+  }
+}
+function ghPushDebounced(){
+  const cfg = ghCfg();
+  if(!cfg.owner || !cfg.repo || !cfg.token) return;
+  clearTimeout(ghPushTimer);
+  ghPushTimer = setTimeout(ghPush, 2000);
+}
+async function ghPush(){
+  const cfg = ghCfg();
+  if(!cfg.owner || !cfg.repo || !cfg.token){ setGhBadge('local'); return; }
+  if(ghPushing) return;
+  ghPushing = true;
+  setGhBadge('syncing');
+  try{
+    const path   = cfg.path   || 'data/pdca-v3.json';
+    const branch = cfg.branch || 'main';
+    if(!ghSha){
+      const shaUrl = 'https://api.github.com/repos/' + cfg.owner + '/' + cfg.repo + '/contents/' + path + '?ref=' + branch;
+      const sr = await fetch(shaUrl, {headers:{Authorization:'token '+cfg.token, Accept:'application/vnd.github+json'}});
+      if(sr.ok){ const sd = await sr.json(); ghSha = sd.sha; }
+    }
+    const json = JSON.stringify(state, null, 2);
+    const content = btoa(unescape(encodeURIComponent(json)));
+    const url = 'https://api.github.com/repos/' + cfg.owner + '/' + cfg.repo + '/contents/' + path;
+    const body = {
+      message: '[PDCA] ' + (cfg.user || 'unknown') + ' · ' + new Date().toLocaleString('ko-KR'),
+      content,
+      branch
+    };
+    if(ghSha) body.sha = ghSha;
+    const r = await fetch(url, {
+      method:'PUT',
+      headers:{Authorization:'token '+cfg.token,'Content-Type':'application/json',Accept:'application/vnd.github+json'},
+      body: JSON.stringify(body)
+    });
+    if(r.status === 409 || r.status === 422){
+      ghSha = null;
+      ghPushing = false;
+      await ghPull(true);
+      setGhBadge('error');
+      alert('⚠️ 다른 팀원이 같은 시간에 수정했습니다.\n최신 데이터를 불러왔습니다.\n변경사항을 다시 적용해주세요.');
+      return;
+    }
+    if(!r.ok){
+      const err = await r.json().catch(()=>({}));
+      throw new Error('HTTP ' + r.status + ' - ' + (err.message || ''));
+    }
+    const result = await r.json();
+    ghSha = result.content.sha;
+    setGhBadge('synced');
+  }catch(e){
+    setGhBadge('error');
+    console.error('GitHub push 실패:', e);
+  }finally{
+    ghPushing = false;
+  }
+}
+function openGhSettings(){
+  const cfg = ghCfg();
+  const html = ''
+    + '<div style="display:flex;flex-direction:column;gap:14px">'
+    + '<div style="padding:14px;background:linear-gradient(135deg,#EFF6FF,#DBEAFE);border:1px solid #BFDBFE;border-radius:8px;font-size:12.5px;line-height:1.7;color:#1E3A8A">'
+    +   '<strong>🔄 GitHub 공유 데이터 운영</strong><br>'
+    +   '팀원 모두가 같은 GitHub 저장소의 JSON 파일을 읽고 씁니다.<br>'
+    +   '• <b>토큰 없이</b> = 읽기 전용 / <b>토큰 등록</b> = 자동 저장 + 실시간 공유<br>'
+    +   '• 데이터 위치: <code>data/pdca-v3.json</code>'
+    + '</div>'
+    + '<div style="border:1px solid var(--line);border-radius:8px;padding:14px 16px">'
+    +   '<div style="font-weight:700;margin-bottom:10px">📁 저장소 정보</div>'
+    +   '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'
+    +     '<div><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px">GitHub 사용자명</label>'
+    +     '<input id="gh-owner" type="text" value="' + esc(cfg.owner||'oks-kje') + '" style="width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;font-family:JetBrains Mono,monospace"></div>'
+    +     '<div><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px">저장소 이름</label>'
+    +     '<input id="gh-repo" type="text" value="' + esc(cfg.repo||'Acorn-Marketing') + '" style="width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;font-family:JetBrains Mono,monospace"></div>'
+    +   '</div>'
+    +   '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'
+    +     '<div><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px">브랜치</label>'
+    +     '<input id="gh-branch" type="text" value="' + esc(cfg.branch||'main') + '" style="width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;font-family:JetBrains Mono,monospace"></div>'
+    +     '<div><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px">본인 이름 (커밋용)</label>'
+    +     '<input id="gh-user" type="text" value="' + esc(cfg.user||'') + '" placeholder="K.S" style="width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px"></div>'
+    +   '</div>'
+    +   '<div><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px">데이터 파일 경로</label>'
+    +   '<input id="gh-path" type="text" value="' + esc(cfg.path||'data/pdca-v3.json') + '" style="width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;font-family:JetBrains Mono,monospace"></div>'
+    + '</div>'
+    + '<div style="border:1px solid var(--line);border-radius:8px;padding:14px 16px">'
+    +   '<div style="font-weight:700;margin-bottom:10px">🔐 Personal Access Token (PAT)</div>'
+    +   '<input id="gh-token" type="password" value="' + esc(cfg.token||'') + '" placeholder="github_pat_..." autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px;font-family:JetBrains Mono,monospace">'
+    +   '<div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.6">'
+    +   '⚠️ 토큰은 본인 브라우저에만 저장되며 GitHub에 업로드되지 않습니다.<br>'
+    +   '<b>발급:</b> GitHub → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b><br>'
+    +   '<b>권한:</b> Repository access = Acorn-Marketing만 / Permissions = Contents <b>Read and Write</b></div>'
+    + '</div>'
+    + '<div style="padding:12px 14px;background:#FEF3C7;border:1px solid #F59E0B40;border-radius:8px;font-size:11.5px;color:#78350F;line-height:1.6">'
+    + '<b>💡 첫 사용 시:</b> ① 저장소에 <code>data/pdca-v3.json</code>이 없으면 GitHub에서 빈 JSON을 먼저 만들어주세요.<br>'
+    + '② 토큰 등록 후 <b>📤 현재 데이터 올리기</b> 클릭 → 초기 데이터 업로드.</div>'
+    + '<div class="modal-actions" style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">'
+    +   '<button class="btn btn-danger" onclick="clearGh()">설정 삭제</button>'
+    +   '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    +     '<button class="btn btn-secondary" onclick="closeModal()">취소</button>'
+    +     '<button class="btn btn-do" onclick="ghForcePush()">📤 현재 데이터 올리기</button>'
+    +     '<button class="btn btn-plan" onclick="saveGh()">저장 & 동기화</button>'
+    +   '</div>'
+    + '</div>'
+    + '</div>';
+  showModal('⚙ GitHub 공유 설정', html);
+}
+function saveGh(){
+  const cfg = {
+    owner:  document.getElementById('gh-owner').value.trim(),
+    repo:   document.getElementById('gh-repo').value.trim(),
+    branch: document.getElementById('gh-branch').value.trim() || 'main',
+    user:   document.getElementById('gh-user').value.trim(),
+    token:  document.getElementById('gh-token').value.trim(),
+    path:   document.getElementById('gh-path').value.trim() || 'data/pdca-v3.json'
+  };
+  if(!cfg.owner || !cfg.repo){ alert('GitHub 사용자명과 저장소 이름은 필수입니다.'); return; }
+  ghSetCfg(cfg);
+  closeModal();
+  ghPull();
+}
+async function ghForcePush(){
+  const tmp = {
+    owner:  document.getElementById('gh-owner').value.trim(),
+    repo:   document.getElementById('gh-repo').value.trim(),
+    branch: document.getElementById('gh-branch').value.trim() || 'main',
+    user:   document.getElementById('gh-user').value.trim(),
+    token:  document.getElementById('gh-token').value.trim(),
+    path:   document.getElementById('gh-path').value.trim() || 'data/pdca-v3.json'
+  };
+  if(!tmp.token){ alert('PAT 토큰이 필요합니다.'); return; }
+  ghSetCfg(tmp);
+  if(!confirm('현재 브라우저의 데이터를 GitHub에 업로드합니다.\n기존 GitHub 데이터를 덮어쓰게 됩니다. 계속할까요?')) return;
+  ghSha = null;
+  await ghPush();
+  alert('✅ GitHub에 업로드 완료');
+}
+function clearGh(){
+  if(!confirm('GitHub 공유 설정을 삭제할까요?')) return;
+  localStorage.removeItem(GH_CFG_KEY);
+  ghSha = null;
+  setGhBadge('local');
+  const $u = document.getElementById('ghUserBadge'); if($u) $u.textContent = 'K.S';
+  closeModal();
+}
+window.addEventListener('load', function(){
+  setTimeout(function(){
+    const cfg = ghCfg();
+    if(cfg.owner && cfg.repo){
+      const $u = document.getElementById('ghUserBadge');
+      if($u && cfg.user) $u.textContent = cfg.user;
+      ghPull(true);
+    }
+  }, 500);
+});
 
 </script>
 <!-- ═══════════════ 기획안 작성 모달 ═══════════════ -->
